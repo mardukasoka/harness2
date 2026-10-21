@@ -1,0 +1,21 @@
+name: Scientific schema checks
+on:
+  pull_request:
+    paths:
+      - 'adapters/rosetta_adapter.py'
+      - 'schemas/**'
+      - 'tests/test_scientific_schema.py'
+      - '.github/workflows/scientific-schema.yml'
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pytest jsonschema
+      - run: python -m pytest tests/test_scientific_schema.py -q
