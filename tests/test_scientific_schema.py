@@ -168,3 +168,31 @@ def test_provenance_sha256_recorded_for_existing_file(tmp_path):
     )
     art = rec["result"]["provenance"]["artifacts"][0]
     assert len(art["sha256"]) == 64
+
+
+def test_real_backend_rejects_missing_evidence():
+    rec = rosetta_to_record(act_name="score_pdb", act_args={},
+        action_result={"status_code": "success", "designs": [
+            {"pdb": "this_file_does_not_exist_9b38.pdb", "score_dict": {"total_score": -1.0}}]},
+        call_id="missing", backend="local")
+    assert rec["status"] == "error"
+    assert "missing" in rec["error"]["message"]
+
+
+def test_missing_score_cannot_win_selection():
+    rec = rosetta_to_record(act_name="score_pdb", act_args={},
+        action_result={"status_code": "success", "designs": [
+            {"pdb": "mock/a.pdb", "sequence": "A", "score_dict": {}},
+            {"pdb": "mock/b.pdb", "sequence": "B", "score_dict": {"total_score": 12.0}}]},
+        call_id="scores", backend="mock")
+    assert rec["result"]["value"]["sequence"] == "B"
+    assert "SIMULATED" in rec["result"]["provenance"]["notes"]
+
+
+def test_nonfinite_or_missing_scores_rejected():
+    for scores in ({}, {"total_score": float("nan")}):
+        with pytest.raises(SchemaError):
+            rosetta_to_record(act_name="score_pdb", act_args={},
+                action_result={"status_code": "success", "designs": [
+                    {"pdb": "mock/a.pdb", "score_dict": scores}]},
+                call_id="invalid", backend="mock")
