@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -92,6 +93,10 @@ def rosetta_to_record(
         raise SchemaError("act_name is required")
     if not isinstance(act_args, dict):
         raise SchemaError("act_args must be a dict")
+    if not isinstance(action_result, dict):
+        raise SchemaError("action_result must be a dict")
+    if not call_id:
+        raise SchemaError("call_id is required")
     if "status_code" not in action_result:
         raise SchemaError("action_result.status_code is required")
 
@@ -121,23 +126,32 @@ def rosetta_to_record(
                 if digest:
                     art["sha256"] = digest
                 artifacts.append(art)
-        if not artifacts:
+        if backend != "mock" and any("sha256" not in artifact for artifact in artifacts):
+            status = "runtime_error"
+            action_result = {**action_result, "stderr": "Rosetta evidence file missing or unreadable"}
+        elif not artifacts:
             # Evidence preservation: a success with no artefact is downgraded to an error.
             status = "runtime_error"
             action_result = {**action_result, "stderr": "success reported without decoy PDB evidence"}
         else:
-            best = min(designs, key=lambda d: float((d.get("score_dict") or {}).get(score_term, 0.0)))
+            scored = [d for d in designs if isinstance((d.get("score_dict") or {}).get(score_term), (int, float))
+                      and not isinstance(d["score_dict"][score_term], bool)
+                      and math.isfinite(float(d["score_dict"][score_term]))]
+            if not scored:
+                raise SchemaError(f"no finite numeric {score_term} found in designs")
+            best = min(scored, key=lambda d: float(d["score_dict"][score_term]))
             metrics = {k: float(v) for k, v in (best.get("score_dict") or {}).items()
                        if isinstance(v, (int, float)) and not isinstance(v, bool)}
             record["status"] = "success"
             record["result"] = {
                 "value": {"sequence": best.get("sequence"), score_term: metrics.get(score_term)},
-                "units": "REU",  # Rosetta Energy Units
+                "units": "REU" if score_term == "total_score" else None,  # Other scores may use different units
                 "metrics": metrics,
                 "provenance": {
                     "source": f"Rosetta via {tool_version}",
                     "artifacts": artifacts,
-                    "notes": f"{len(designs)} design(s); best by min {score_term}",
+                    "notes": f"{len(designs)} design(s); best by min {score_term}; "
+                             + ("SIMULATED: artifact paths not verified" if backend == "mock" else "artifact SHA-256 verified"),
                 },
             }
             return record
